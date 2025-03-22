@@ -1,4 +1,4 @@
-module MGM
+module github.com/lirprocs/MGM
 
 go 1.23.3
 
