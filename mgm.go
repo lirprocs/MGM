@@ -1,32 +1,34 @@
 package main
 
 import (
-	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"github.com/lirprocs/Kuznyechik/KuznEncrypt"
 )
 
-type plainText struct {
-	p     [][16]byte
-	pStar []byte
+const s = 16 //TODO нормально получать S
+
+type block struct {
+	b     [][16]byte
+	bStar []byte
 }
 
-func Encrypt(a []byte, pText []byte, key [32]byte) ([][16]byte, []byte) {
-	p := &plainText{}
-	aT := &plainText{}
+func Encrypt(a []byte, pText []byte, key [32]byte, nonce [16]byte) ([][16]byte, []byte) {
+	p := &block{}
+	aT := &block{}
 	q := pToBlock(pText, p) //Количество полных блоков
 	h := pToBlock(a, aT)
 
-	s := 16 //TODO нормально получать S
-	nonceq := make([]byte, 16)
-	_, err := rand.Read(nonceq)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("Nonce: %X\n", nonceq)
+	//nonceq := make([]byte, 16)
+	//_, err := rand.Read(nonceq)
+	//if err != nil {
+	//	panic(err)
+	//}
+	//fmt.Printf("Nonce: %X\n", nonceq)
 
-	nonce0 := [16]byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88}
+	nonce0, nonce1 := concNonce(nonce)
+
+	//nonce0 := [16]byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88}
 	y := getY(q+1, nonce0, key) //уже Ek
 	fmt.Printf("Y: %X\n", y)
 
@@ -36,7 +38,7 @@ func Encrypt(a []byte, pText []byte, key [32]byte) ([][16]byte, []byte) {
 	fmt.Printf("C: %X\n", c)
 	fmt.Printf("A: %X\n", aBlock)
 
-	nonce1 := [16]byte{0x91, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88}
+	//nonce1 := [16]byte{0x91, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88}
 	H := getH(h+1, q+1, nonce1, key)
 	fmt.Printf("H: %X\n", H)
 
@@ -45,20 +47,31 @@ func Encrypt(a []byte, pText []byte, key [32]byte) ([][16]byte, []byte) {
 	return c, t
 }
 
-func pToBlock(pText []byte, plainText *plainText) int {
+func concNonce(nonce [16]byte) ([16]byte, [16]byte) {
+	nonce0 := nonce
+	nonce1 := nonce
+
+	nonce0[0] = nonce0[0] & 0x7F
+	nonce1[0] = nonce1[0] | 0x80
+	//fmt.Printf("%08b\n", nonce0[0])
+	//fmt.Printf("%08b\n", nonce1[0])
+	return nonce0, nonce1
+}
+
+func pToBlock(pText []byte, plainText *block) int {
 	var q int
 	q = len(pText) / 16
 
-	plainText.p = make([][16]byte, q)
+	plainText.b = make([][16]byte, q)
 
 	l, r := 0, 0
 	for i := 0; i < q; i++ {
 		l = r
 		r = r + 16
-		copy(plainText.p[i][:], pText[l:r])
+		copy(plainText.b[i][:], pText[l:r])
 
 	}
-	plainText.pStar = pText[r:]
+	plainText.bStar = pText[r:]
 	return q
 }
 
@@ -75,26 +88,26 @@ func getY(q int, nonce [16]byte, key [32]byte) [][16]byte {
 	return yEnc
 }
 
-func getC(q int, p *plainText, y [][16]byte) ([][16]byte, int) {
+func getC(q int, p *block, y [][16]byte) ([][16]byte, int) {
 	c := make([][16]byte, q+1)
 
 	for i := 0; i < q; i++ {
-		copy(c[i][:], gfAdd(p.p[i][:], y[i][:]))
+		copy(c[i][:], gfAdd(p.b[i][:], y[i][:]))
 	}
-	cStar := gfAdd(p.pStar, msb(y[q][:], len(p.pStar)))
+	cStar := gfAdd(p.bStar, msb(y[q][:], len(p.bStar)))
 	copy(c[q][:], cStar)
 
 	lenC := q*16 + len(cStar)
 	return c, lenC
 }
 
-func getA(h int, p *plainText) ([][16]byte, int) {
+func getA(h int, p *block) ([][16]byte, int) {
 	a := make([][16]byte, h+1)
 
 	for i := 0; i < h; i++ {
-		copy(a[i][:], p.p[i][:])
+		copy(a[i][:], p.b[i][:])
 	}
-	aStar := p.pStar
+	aStar := p.bStar
 	copy(a[h][:], aStar)
 
 	lenA := h*16 + len(aStar)
@@ -118,19 +131,20 @@ func getH(h, q int, nonce [16]byte, key [32]byte) [][16]byte {
 
 func getT(H, C, A [][16]byte, key [32]byte, s, h, q int, lenAC []byte) []byte {
 	var data [16]byte
-	o := geto(H, A, h)
-	t := gett(H, C, q, h)
+	//HA := sumHmulA(H, A, h)
+	//HC := sumHmulC(H, C, q, h)
+	//
+	//HLen := gf128Mul(H[len(H)-1][:], lenAC)
+	//fmt.Printf("F:%X\n", f)
 
-	f := gf128Mul(H[len(H)-1][:], lenAC)
-	fmt.Printf("F:%X\n", f)
-
-	dataSlice := gfAdd(gfAdd(o, t), f)
+	dataSlice := gfAdd(gfAdd(sumHmulA(H, A, h), sumHmulC(H, C, q, h)), gf128Mul(H[len(H)-1][:], lenAC))
+	fmt.Printf("O+T+F:%X\n", dataSlice)
 	copy(data[:], dataSlice[:])
-	Ek := KuznEncrypt.Encrypt(data, key)
-	return msb(Ek[:], s)
+	EkT := KuznEncrypt.Encrypt(data, key)
+	return msb(EkT[:], s)
 }
 
-func geto(H, A [][16]byte, h int) []byte {
+func sumHmulA(H, A [][16]byte, h int) []byte {
 	var o []byte
 	HA := gf128Mul(H[0][:], A[0][:])
 	o = HA
@@ -142,7 +156,7 @@ func geto(H, A [][16]byte, h int) []byte {
 	return o
 }
 
-func gett(H, C [][16]byte, q, h int) []byte {
+func sumHmulC(H, C [][16]byte, q, h int) []byte {
 	var t []byte
 	HA := gf128Mul(H[h][:], C[0][:])
 	t = HA
@@ -268,10 +282,11 @@ func main() {
 
 	//key := [32]byte{0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
 	//0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}
-	//plainText := [16]byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88}
-	//z := KuznEncrypt.Encrypt(plainText, key)
+	//block := [16]byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88}
+	//z := KuznEncrypt.Encrypt(block, key)
 	//fmt.Printf("%X\n", z)
 
+	nonce := [16]byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88}
 	K := [32]byte{0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
 		0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}
 
@@ -305,20 +320,16 @@ func main() {
 
 	fmt.Printf("%X\n", msb(nonce[:], 4))*/
 
-	//p := &plainText{}
+	//b := &block{}
 	//
-	//pToBlock(P, p)
+	//pToBlock(P, b)
 	//
-	//fmt.Printf("%X: %X", p.p, p.pStar)
+	//fmt.Printf("%X: %X", b.b, b.bStar)
 
 	//i =
 	//j =
 	//h = 3
 	//q = 5
 
-	Encrypt(A, P, K)
-
-	result := [16]byte{0xFD, 0x47, 0x5B, 0xCA, 0x28, 0x79, 0x55, 0x9B, 0x79, 0xF1, 0xF3, 0x57, 0xF2, 0xC3, 0x6E, 0x28}
-
-	KuznEncrypt.Encrypt(result, K)
+	Encrypt(A, P, K, nonce)
 }
