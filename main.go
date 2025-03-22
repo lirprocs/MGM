@@ -2,9 +2,9 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"github.com/lirprocs/Kuznyechik/KuznEncrypt"
-	"time"
 )
 
 type plainText struct {
@@ -18,7 +18,7 @@ func Encrypt(a []byte, pText []byte, key [32]byte) ([][16]byte, []byte) {
 	q := pToBlock(pText, p) //Количество полных блоков
 	h := pToBlock(a, aT)
 
-	s := 32 //TODO нормально получать S
+	s := 16 //TODO нормально получать S
 	nonceq := make([]byte, 16)
 	_, err := rand.Read(nonceq)
 	if err != nil {
@@ -30,14 +30,18 @@ func Encrypt(a []byte, pText []byte, key [32]byte) ([][16]byte, []byte) {
 	y := getY(q+1, nonce0, key) //уже Ek
 	fmt.Printf("Y: %X\n", y)
 
-	c := getC(q, p, y)
+	aBlock, lenA := getA(h, aT)
+	c, lenC := getC(q, p, y)
+	lenAC := getLen(lenA, lenC)
 	fmt.Printf("C: %X\n", c)
+	fmt.Printf("A: %X\n", aBlock)
 
 	nonce1 := [16]byte{0x91, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88}
 	H := getH(h+1, q+1, nonce1, key)
 	fmt.Printf("H: %X\n", H)
 
-	t := getT(H, c, a, key, s)
+	t := getT(H, c, aBlock, key, s, h+1, q+1, lenAC)
+	fmt.Printf("T: %X\n", t)
 	return c, t
 }
 
@@ -71,14 +75,30 @@ func getY(q int, nonce [16]byte, key [32]byte) [][16]byte {
 	return yEnc
 }
 
-func getC(q int, p *plainText, y [][16]byte) [][16]byte {
+func getC(q int, p *plainText, y [][16]byte) ([][16]byte, int) {
 	c := make([][16]byte, q+1)
 
 	for i := 0; i < q; i++ {
 		copy(c[i][:], gfAdd(p.p[i][:], y[i][:]))
 	}
-	copy(c[q][:], gfAdd(p.pStar, msb(y[q][:], len(p.pStar))))
-	return c
+	cStar := gfAdd(p.pStar, msb(y[q][:], len(p.pStar)))
+	copy(c[q][:], cStar)
+
+	lenC := q*16 + len(cStar)
+	return c, lenC
+}
+
+func getA(h int, p *plainText) ([][16]byte, int) {
+	a := make([][16]byte, h+1)
+
+	for i := 0; i < h; i++ {
+		copy(a[i][:], p.p[i][:])
+	}
+	aStar := p.pStar
+	copy(a[h][:], aStar)
+
+	lenA := h*16 + len(aStar)
+	return a, lenA
 }
 
 func getH(h, q int, nonce [16]byte, key [32]byte) [][16]byte {
@@ -96,16 +116,42 @@ func getH(h, q int, nonce [16]byte, key [32]byte) [][16]byte {
 	return hEnc
 }
 
-func getT(h, c, a [][16]byte, key [32]byte, s int) []byte {
+func getT(H, C, A [][16]byte, key [32]byte, s, h, q int, lenAC []byte) []byte {
 	var data [16]byte
-	o :=
-	t :=
-	f :=
+	o := geto(H, A, h)
+	t := gett(H, C, q, h)
+
+	f := gf128Mul(H[len(H)-1][:], lenAC)
+	fmt.Printf("F:%X\n", f)
 
 	dataSlice := gfAdd(gfAdd(o, t), f)
 	copy(data[:], dataSlice[:])
-	Ek := KuznEncrypt.Encrypt(data,key)
+	Ek := KuznEncrypt.Encrypt(data, key)
 	return msb(Ek[:], s)
+}
+
+func geto(H, A [][16]byte, h int) []byte {
+	var o []byte
+	HA := gf128Mul(H[0][:], A[0][:])
+	o = HA
+	for i := 1; i < h; i++ {
+		HA = gf128Mul(H[i][:], A[i][:])
+		o = gfAdd(o, HA)
+	}
+	fmt.Printf("O:%X\n", o)
+	return o
+}
+
+func gett(H, C [][16]byte, q, h int) []byte {
+	var t []byte
+	HA := gf128Mul(H[h][:], C[0][:])
+	t = HA
+	for j := 1; j < q; j++ {
+		HA = gf128Mul(H[h+j][:], C[j][:])
+		t = gfAdd(t, HA)
+	}
+	fmt.Printf("T:%X\n", t)
+	return t
 }
 
 func msb(data []byte, i int) []byte {
@@ -122,6 +168,13 @@ func incrL(nonce [16]byte) [16]byte {
 	return nonce
 }
 
+func getLen(lenA, lenC int) []byte {
+	lenAC := make([]byte, 16) // Для 128-битного представления (например, если n = 128)
+	binary.BigEndian.PutUint64(lenAC[:8], uint64(lenA)*8)
+	binary.BigEndian.PutUint64(lenAC[8:], uint64(lenC)*8)
+	return lenAC
+}
+
 func gfAdd(a, b []byte) []byte {
 	ans := make([]byte, len(a))
 	for k, v := range a {
@@ -130,29 +183,54 @@ func gfAdd(a, b []byte) []byte {
 	return ans
 }
 
-func gf128Mul(a, b []byte) []byte {
-	const poly = 135 // Коэффициенты порождающего многочлена x⁷ + x² + x + 1 (1000 0111)
-	res := make([]byte, 16)
-
-	for i := 0; i < 16; i++ {
-		for j := 0; j < 8; j++ {
-			if (b[i] & (1 << (7 - j))) != 0 {
-				res = gfAdd(res, a)
-			}
-
-			msbb := a[0] & 0x80
-
-			for k := 0; k < 15; k++ {
-				a[k] = (a[k] << 1) | (a[k+1] >> 7)
-			}
-
-			a[15] <<= 1
-			if msbb != 0 {
-				a[15] ^= poly
-			}
-		}
+func bytesToUint64(b []byte) (uint64, uint64) {
+	var high, low uint64
+	for i := 0; i < 8; i++ {
+		high = (high << 8) | uint64(b[i])
+		low = (low << 8) | uint64(b[i+8])
 	}
-	return res
+	return high, low
+}
+
+func uint64ToBytes(high, low uint64) [16]byte {
+	var b [16]byte
+	for i := 0; i < 8; i++ {
+		b[i] = byte(high >> (56 - 8*i))
+		b[i+8] = byte(low >> (56 - 8*i))
+	}
+	return b
+}
+
+func gf128Mul(a, b []byte) []byte {
+	var x [16]byte
+	var aLow, aHigh = bytesToUint64(a[:])
+	var bLow, bHigh = bytesToUint64(b[:])
+	var xHigh, xLow uint64
+	pow2_63 := uint64(0x8000000000000000) // 2^63
+	var bitFlag uint64
+
+	for bHigh != 0 || bLow != 0 {
+		if bHigh&1 != 0 {
+			xLow ^= aLow
+			xHigh ^= aHigh
+		}
+
+		bitFlag = aHigh & pow2_63
+		aHigh = (aHigh << 1) ^ (func() uint64 {
+			if aLow&pow2_63 != 0 {
+				return 0x87
+			}
+			return 0x00
+		}())
+		aLow = (aLow << 1) | (bitFlag >> 63)
+
+		bitFlag = bLow & 0x01
+		bHigh = (bHigh >> 1) | (bitFlag << 63)
+		bLow = bLow >> 1
+	}
+
+	x = uint64ToBytes(xLow, xHigh)
+	return x[:]
 }
 
 func main() {
@@ -197,12 +275,13 @@ func main() {
 	K := [32]byte{0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
 		0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}
 
-	//nonce := [16]byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88}
+	//nonce0 := [16]byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88}
+	//nonce1 := [16]byte{0x91, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88}
 
 	A := []byte{
-		0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-		0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03,
-		0xea, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05}
+		0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+		0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03,
+		0xea, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05} //41
 
 	P := []byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88,
 		0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xee, 0xff, 0x0a,
@@ -232,6 +311,14 @@ func main() {
 	//
 	//fmt.Printf("%X: %X", p.p, p.pStar)
 
+	//i =
+	//j =
+	//h = 3
+	//q = 5
+
 	Encrypt(A, P, K)
 
+	result := [16]byte{0xFD, 0x47, 0x5B, 0xCA, 0x28, 0x79, 0x55, 0x9B, 0x79, 0xF1, 0xF3, 0x57, 0xF2, 0xC3, 0x6E, 0x28}
+
+	KuznEncrypt.Encrypt(result, K)
 }
