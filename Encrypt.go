@@ -2,17 +2,19 @@ package main
 
 import (
 	"encoding/binary"
+	"fmt"
 	"github.com/lirprocs/Kuznyechik/KuznEncrypt"
+	"math"
 )
 
-const s = 16 //TODO нормально получать S
+const s = 16
 
 type block struct {
 	b     [][16]byte
 	bStar []byte
 }
 
-func Encrypt(a []byte, pText []byte, key [32]byte, nonce [16]byte) ([][16]byte, []byte) {
+func Encrypt(a []byte, pText []byte, key [32]byte, nonce [16]byte) (error, [][16]byte, []byte) {
 	p := &block{}
 	aT := &block{}
 	q := pToBlock(pText, p) //Количество полных блоков
@@ -25,6 +27,9 @@ func Encrypt(a []byte, pText []byte, key [32]byte, nonce [16]byte) ([][16]byte, 
 
 	aBlock, lenA := getA(h, aT)
 	c, lenC := getC(q, p, y)
+	if len(pText)+lenA < 0 || float64(len(pText)+lenA) > math.Pow(2, 64) {
+		return fmt.Errorf("Error of len"), nil, nil
+	}
 	lenAC := getLen(lenA, lenC)
 
 	//fmt.Printf("A: %X\n", aBlock)
@@ -35,7 +40,7 @@ func Encrypt(a []byte, pText []byte, key [32]byte, nonce [16]byte) ([][16]byte, 
 	t := getT(H, c, aBlock, key, s, h+1, q+1, lenAC)
 	//fmt.Printf("C: %X\n", c)
 	//fmt.Printf("T: %X\n", t)
-	return c, t
+	return nil, c, t
 }
 
 func concNonce(nonce [16]byte) ([16]byte, [16]byte) {
@@ -122,40 +127,40 @@ func getH(h, q int, nonce [16]byte, key [32]byte) [][16]byte {
 func getT(H, C, A [][16]byte, key [32]byte, s, h, q int, lenAC []byte) []byte {
 	var data [16]byte
 	//HA := sumHmulA(H, A, h)
-	//HC := sumHmulC(H, C, q, h)
+	//HC := sumOfMul(H, C, q, h)
 	//
 	//HLen := gf128Mul(H[len(H)-1][:], lenAC)
 	//fmt.Printf("F:%X\n", f)
 
-	dataSlice := gfAdd(gfAdd(sumHmulA(H, A, h), sumHmulC(H, C, q, h)), gf128Mul(H[len(H)-1][:], lenAC))
+	dataSlice := gfAdd(gfAdd(sumOfMul(H, A, h, 0), sumOfMul(H, C, q, h)), gf128Mul(H[len(H)-1][:], lenAC))
 	//fmt.Printf("O+T+F:%X\n", dataSlice)
 	copy(data[:], dataSlice[:])
 	EkT := KuznEncrypt.Encrypt(data, key)
 	return msb(EkT[:], s)
 }
 
-func sumHmulA(H, A [][16]byte, h int) []byte {
-	var o []byte
-	HA := gf128Mul(H[0][:], A[0][:])
-	o = HA
-	for i := 1; i < h; i++ {
-		HA = gf128Mul(H[i][:], A[i][:])
-		o = gfAdd(o, HA)
-	}
-	//fmt.Printf("O:%X\n", o)
-	return o
-}
+//func sumHmulA(H, A [][16]byte, h int) []byte {
+//	var o []byte
+//	HA := gf128Mul(H[0][:], A[0][:])
+//	o = HA
+//	for i := 1; i < h; i++ {
+//		HA = gf128Mul(H[i][:], A[i][:])
+//		o = gfAdd(o, HA)
+//	}
+//	//fmt.Printf("O:%X\n", o)
+//	return o
+//}
 
-func sumHmulC(H, C [][16]byte, q, h int) []byte {
-	var t []byte
-	HA := gf128Mul(H[h][:], C[0][:])
-	t = HA
+func sumOfMul(H, data [][16]byte, q, h int) []byte {
+	var sum []byte
+	HA := gf128Mul(H[h][:], data[0][:])
+	sum = HA
 	for j := 1; j < q; j++ {
-		HA = gf128Mul(H[h+j][:], C[j][:])
-		t = gfAdd(t, HA)
+		HA = gf128Mul(H[h+j][:], data[j][:])
+		sum = gfAdd(sum, HA)
 	}
-	//fmt.Printf("T:%X\n", t)
-	return t
+	//fmt.Printf("T:%X\n", sum)
+	return sum
 }
 
 func msb(data []byte, i int) []byte {
@@ -261,5 +266,9 @@ func gf128Mul(a, b []byte) []byte {
 //		0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xee, 0xff, 0x0a, 0x00, 0x11,
 //		0xaa, 0xbb, 0xcc} //67
 //
-//	Encrypt(A, P, K, nonce)
+//	err, a, b := Encrypt(A, P, K, nonce)
+//
+//	fmt.Printf("Err: %s\n", err)
+//	fmt.Printf("C: %X\n", a)
+//	fmt.Printf("T: %X\n", b)
 //}

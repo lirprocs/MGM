@@ -185,7 +185,7 @@ func TestEncrypt(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		resC, resT := Encrypt(tt.a, tt.pText, tt.key, tt.nonce)
+		_, resC, resT := Encrypt(tt.a, tt.pText, tt.key, tt.nonce)
 		if !bytes.Equal(resT, tt.expectedT) {
 			t.Errorf("Encrypt() T = %X; want %X", resT, tt.expectedT)
 		}
@@ -229,7 +229,7 @@ func TestDecrypt(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		c, TOld := Encrypt(tt.a, tt.pText, tt.key, tt.nonce)
+		_, c, TOld := Encrypt(tt.a, tt.pText, tt.key, tt.nonce)
 		err, plainText, _ := Decrypt(c, TOld, tt.a, tt.key, tt.nonce)
 		if err != nil {
 			t.Errorf("Decrypt() T %e\n", err)
