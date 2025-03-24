@@ -19,9 +19,7 @@ func Encrypt(a []byte, pText []byte, key [32]byte, nonce [16]byte) (error, [][16
 	p := &block{}
 	aT := &block{}
 	q := pToBlock(pText, p) //Количество полных блоков
-	fmt.Println(q)
-	h := pToBlock(a, aT) //Количество полных блоков
-	fmt.Println(h)
+	h := pToBlock(a, aT)    //Количество полных блоков
 
 	//Получение векторов 0||nonce и 1||nonce
 	nonce0, nonce1 := concNonce(nonce)
