@@ -5,6 +5,7 @@ import (
 	"fmt"
 )
 
+// Основная функция расшифрования
 func Decrypt(cipherText [][16]byte, t []byte, a []byte, key [32]byte, nonce [16]byte) (error, []byte, []byte) {
 	c := &block{}
 	aT := &block{}
@@ -33,6 +34,7 @@ func Decrypt(cipherText [][16]byte, t []byte, a []byte, key [32]byte, nonce [16]
 
 }
 
+// Удаление 0 в конце последнего блока
 func trimTrailingZeros(blocks [][16]byte, p *block) (int, int, []byte) {
 	q := len(blocks)
 
@@ -57,6 +59,7 @@ func trimTrailingZeros(blocks [][16]byte, p *block) (int, int, []byte) {
 	return q - 1, (q-1)*16 + len(lastBlock), result
 }
 
+// Получение открытого текста
 func getPlainText(q int, p *block, y [][16]byte) [][16]byte {
 	plainText := make([][16]byte, q+1)
 
