@@ -5,7 +5,12 @@ import (
 	"fmt"
 )
 
-// Основная функция расшифрования
+// Decrypt — исходный интерфейс расшифрования.
+//
+// Deprecated: длина шифротекста определяется срезанием нулевых байтов в конце
+// последнего блока, поэтому сообщение, чей шифротекст кончается байтом 0x00,
+// не проходит проверку (примерно одно из 256), а нули в конце открытого текста
+// теряются. Используйте New — там длина передаётся явно.
 func Decrypt(cipherText [][16]byte, t []byte, a []byte, key [32]byte, nonce [16]byte) (error, []byte, []byte) {
 	c := &block{}
 	aT := &block{}
@@ -17,9 +22,11 @@ func Decrypt(cipherText [][16]byte, t []byte, a []byte, key [32]byte, nonce [16]
 	lenAC := getLen(lenA, lenC)
 
 	nonce0, nonce1 := concNonce(nonce)
-	H := getH(h+1, q+1, nonce1, key)
+	hA := blockCount(lenA)
+	qC := blockCount(lenC)
+	H := getH(hA, qC, nonce1, key)
 
-	tNew := getT(H, cipherText, aBlock, key, s, h+1, q+1, lenAC)
+	tNew := getT(H, cipherText, aBlock, key, s, hA, qC, lenAC)
 	//fmt.Printf("%X\n", tNew)
 	if !bytes.Equal(t, tNew) {
 		return fmt.Errorf("ошибка проверки дополнительных имитозащищаемых данных"), nil, nil

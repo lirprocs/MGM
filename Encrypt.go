@@ -14,7 +14,11 @@ type block struct {
 	bStar []byte     // Данные не вошедшие в блок
 }
 
-// Основная функция шифрования
+// Encrypt — исходный интерфейс шифрования для «Кузнечика» с 16-байтной имитовставкой.
+//
+// Deprecated: возвращает шифротекст блоками, из-за чего Decrypt не знает его
+// точную длину. Для новых программ — New(блочный шифр), стандартный cipher.AEAD
+// для «Кузнечика» и «Магмы».
 func Encrypt(a []byte, pText []byte, key [32]byte, nonce [16]byte) (error, [][16]byte, []byte) {
 	p := &block{}
 	aT := &block{}
@@ -42,15 +46,26 @@ func Encrypt(a []byte, pText []byte, key [32]byte, nonce [16]byte) (error, [][16
 
 	//fmt.Printf("A: %X\n", aBlock)
 
+	//Число блоков A и C с учётом неполного последнего: пустой «хвост» блоком
+	//не считается (иначе при длине, кратной 16 байтам, номер H для len(A)||len(C)
+	//сдвигался на единицу и имитовставка расходилась со стандартом)
+	hA := blockCount(lenA)
+	qC := blockCount(lenC)
+
 	//Вычисление H
-	H := getH(h+1, q+1, nonce1, key)
+	H := getH(hA, qC, nonce1, key)
 	//fmt.Printf("H: %X\n", H)
 
 	//Вычисление T
-	t := getT(H, c, aBlock, key, s, h+1, q+1, lenAC)
+	t := getT(H, c, aBlock, key, s, hA, qC, lenAC)
 	//fmt.Printf("C: %X\n", c)
 	//fmt.Printf("T: %X\n", t)
 	return nil, c, t
+}
+
+// blockCount — число 16-байтных блоков (последний может быть неполным).
+func blockCount(n int) int {
+	return (n + 15) / 16
 }
 
 func concNonce(nonce [16]byte) ([16]byte, [16]byte) {
@@ -179,13 +194,29 @@ func msb(data []byte, i int) []byte {
 	return data[:i]
 }
 
+// incrR — прибавление единицы к правой половине блока (байты 8..15)
+// по модулю 2^64 с переносом между байтами (RFC 9058, incr_r).
+// Раньше увеличивался только байт 15 без переноса, и через 256 блоков
+// гамма повторялась.
 func incrR(nonce [16]byte) [16]byte {
-	nonce[15] = nonce[15] + 1
+	for i := 15; i >= 8; i-- {
+		nonce[i]++
+		if nonce[i] != 0 {
+			break
+		}
+	}
 	return nonce
 }
 
+// incrL — прибавление единицы к левой половине блока (байты 0..7)
+// по модулю 2^64 с переносом (RFC 9058, incr_l).
 func incrL(nonce [16]byte) [16]byte {
-	nonce[7] = nonce[7] + 1
+	for i := 7; i >= 0; i-- {
+		nonce[i]++
+		if nonce[i] != 0 {
+			break
+		}
+	}
 	return nonce
 }
 
