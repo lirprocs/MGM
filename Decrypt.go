@@ -1,7 +1,7 @@
 package MGM
 
 import (
-	"bytes"
+	"crypto/subtle"
 	"fmt"
 )
 
@@ -12,6 +12,9 @@ import (
 // не проходит проверку (примерно одно из 256), а нули в конце открытого текста
 // теряются. Используйте New — там длина передаётся явно.
 func Decrypt(cipherText [][16]byte, t []byte, a []byte, key [32]byte, nonce [16]byte) (error, []byte, []byte) {
+	if len(cipherText) == 0 {
+		return fmt.Errorf("пустой шифротекст"), nil, nil
+	}
 	c := &block{}
 	aT := &block{}
 	pT := &block{}
@@ -28,7 +31,7 @@ func Decrypt(cipherText [][16]byte, t []byte, a []byte, key [32]byte, nonce [16]
 
 	tNew := getT(H, cipherText, aBlock, key, s, hA, qC, lenAC)
 	//fmt.Printf("%X\n", tNew)
-	if !bytes.Equal(t, tNew) {
+	if subtle.ConstantTimeCompare(t, tNew) != 1 {
 		return fmt.Errorf("ошибка проверки дополнительных имитозащищаемых данных"), nil, nil
 	}
 

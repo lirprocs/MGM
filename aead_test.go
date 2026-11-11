@@ -148,8 +148,12 @@ func TestNewMatchesLegacy(t *testing.T) {
 		rng.Read(a)
 		var nonce [16]byte
 		rng.Read(nonce[:])
+		nonce[0] &= 0x7f // ICN — n − 1 бит
 		nonce[15] = 0xF0 // правая половина Y_1 близка к переполнению байта
 		nonce[7] = 0xF0
+		if len(a) == 0 && l == 0 {
+			a = []byte{1} // пустые данные и текст одновременно запрещены
+		}
 		_, cBlocks, tag := Encrypt(a, p, key, nonce)
 		var legacy []byte
 		for _, b := range cBlocks {
@@ -208,6 +212,7 @@ func TestRoundTripAndTamper(t *testing.T) {
 		for _, l := range []int{0, 1, 7, 8, 9, 31, 64, 1000} {
 			nonce := make([]byte, aead.NonceSize())
 			rng.Read(nonce)
+			nonce[0] &= 0x7f // ICN — n − 1 бит
 			p := make([]byte, l)
 			rng.Read(p)
 			if l > 0 {
