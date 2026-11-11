@@ -6,22 +6,21 @@ on:
       - main
       - master
   pull_request:
-    branches:
-      - main
-      - master
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-      - name: Set up Go
-        uses: actions/setup-go@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.23.3
-      - name: Install dependencies
-        run: go mod tidy
-
-      - name: Run tests
-        run: go test -tags !docker ./...
+          go-version-file: go.mod
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test -count=1 ./...
+      - name: Фаззинг Seal/Open (20 с)
+        run: go test -run '^$' -fuzz FuzzSealOpen -fuzztime 20s .
